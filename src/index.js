@@ -1,4 +1,6 @@
 import { FilesetResolver, GestureRecognizer } from '@mediapipe/tasks-vision';
+import gestureModel from './assets/gesture_recognizer.task';
+
 const $canvas = document.querySelector('canvas');
 const ctx = $canvas.getContext('2d');
 
@@ -8,7 +10,8 @@ const vision = await FilesetResolver.forVisionTasks(
 
 const gestureRecognizer = await GestureRecognizer.createFromOptions(vision, {
   baseOptions: {
-    modelAssetPath: 'https://storage.googleapis.com/mediapipe-tasks/gesture_recognizer/gesture_recognizer.task',
+    modelAssetPath: gestureModel,
+    delegate: "GPU"
   },
   numHands: 2,
 })

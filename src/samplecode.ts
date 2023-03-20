@@ -1,229 +1,220 @@
-import DeviceDetector from "https://cdn.skypack.dev/device-detector-js@2.2.10";
+// Copyright 2022 The MediaPipe Authors.
 
-// Usage: testSupport({client?: string, os?: string}[])
-// Client and os are regular expressions.
-// See: https://cdn.jsdelivr.net/npm/device-detector-js@2.2.10/README.md for
-// legal values for client and os
-testSupport([
-  {client: 'Chrome'},
-]);
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
 
-function testSupport(supportedDevices:{client?: string; os?: string;}[]) {
-  const deviceDetector = new DeviceDetector();
-  const detectedDevice = deviceDetector.parse(navigator.userAgent);
+//      http://www.apache.org/licenses/LICENSE-2.0
 
-  let isSupported = false;
-  for (const device of supportedDevices) {
-    if (device.client !== undefined) {
-      const re = new RegExp(`^${device.client}$`);
-      if (!re.test(detectedDevice.client.name)) {
-        continue;
-      }
-    }
-    if (device.os !== undefined) {
-      const re = new RegExp(`^${device.os}$`);
-      if (!re.test(detectedDevice.os.name)) {
-        continue;
-      }
-    }
-    isSupported = true;
-    break;
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+import vision from "https://cdn.skypack.dev/@mediapipe/tasks-vision@latest";
+const { GestureRecognizer, FilesetResolver } = vision;
+
+const demosSection = document.getElementById("demos");
+let gestureRecognizer: GestureRecognizer;
+let runningMode = "IMAGE";
+let enableWebcamButton: HTMLButtonElement;
+let webcamRunning: Boolean = false;
+const videoHeight = "360px";
+const videoWidth = "480px";
+
+// Before we can use HandLandmarker class we must wait for it to finish
+// loading. Machine Learning models can be large and take a moment to
+// get everything needed to run.
+async function runDemo() {
+  const vision = await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
+  );
+  gestureRecognizer = await GestureRecognizer.createFromOptions(vision, {
+    baseOptions: {
+      modelAssetPath:
+        "https://storage.googleapis.com/mediapipe-tasks/gesture_recognizer/gesture_recognizer.task"
+    },
+    runningMode: runningMode
+  });
+  demosSection.classList.remove("invisible");
+}
+runDemo();
+
+/********************************************************************
+// Demo 1: Grab a bunch of images from the page and detection them
+// upon click.
+********************************************************************/
+
+// In this demo, we have put all our clickable images in divs with the
+// CSS class 'detectionOnClick'. Lets get all the elements that have
+// this class.
+const imageContainers = document.getElementsByClassName("detectOnClick");
+
+// Now let's go through all of these and add a click event listener.
+for (let i = 0; i < imageContainers.length; i++) {
+  // Add event listener to the child element whichis the img element.
+  imageContainers[i].children[0].addEventListener("click", handleClick);
+}
+
+// When an image is clicked, let's detect it and display results!
+async function handleClick(event) {
+  if (!gestureRecognizer) {
+    alert("Please wait for gestureRecognizer to load");
+    return;
   }
-  if (!isSupported) {
-    alert(`This demo, running on ${detectedDevice.client.name}/${detectedDevice.os.name}, ` +
-          `is not well supported at this time, expect some flakiness while we improve our code.`);
+
+  if (runningMode === "VIDEO") {
+    runningMode = "IMAGE";
+    await gestureRecognizer.setOptions({ runningMode: runningMode });
+  }
+  // Remove all landmarks drawed before
+  const allCanvas = event.target.parentNode.getElementsByClassName("canvas");
+  for (var i = allCanvas.length - 1; i >= 0; i--) {
+    const n = allCanvas[i];
+    n.parentNode.removeChild(n);
+  }
+
+  // We can call handLandmarker.detect as many times as we like with
+  // different image data each time. This returns a promise
+  // which we wait to complete and then call a function to
+  // print out the results of the prediction.
+  const results = gestureRecognizer.recognize(event.target);
+  console.log(results);
+  if (results.gestures.length > 0) {
+    const p = event.target.parentNode.childNodes[3];
+    p.setAttribute("class", "info");
+    p.innerText =
+      "GestureRecognizer: " +
+      results.gestures[0][0].categoryName +
+      "\n Confidence: " +
+      Math.round(parseFloat(results.gestures[0][0].score) * 100) +
+      "%";
+    p.style =
+      "left: 0px;" +
+      "top: " +
+      event.target.height +
+      "px; " +
+      "width: " +
+      (event.target.width - 10) +
+      "px;";
+
+    const canvas = document.createElement("canvas");
+    canvas.setAttribute("class", "canvas");
+    canvas.setAttribute("width", event.target.naturalWidth + "px");
+    canvas.setAttribute("height", event.target.naturalHeight + "px");
+    canvas.style =
+      "left: 0px;" +
+      "top: 0px;" +
+      "width: " +
+      event.target.width +
+      "px;" +
+      "height: " +
+      event.target.height +
+      "px;";
+
+    event.target.parentNode.appendChild(canvas);
+    const cxt = canvas.getContext("2d");
+    for (const landmarks of results.landmarks) {
+      drawConnectors(cxt, landmarks, HAND_CONNECTIONS, {
+        color: "#00FF00",
+        lineWidth: 5
+      });
+      drawLandmarks(cxt, landmarks, { color: "#FF0000", lineWidth: 1 });
+    }
   }
 }
 
-const controls = window;
-const LandmarkGrid = window.LandmarkGrid;
-const drawingUtils = window;
-const mpPose = window;
-const options = {
-  locateFile: (file) => {
-  return `https://cdn.jsdelivr.net/npm/@mediapipe/pose@${mpPose.VERSION}/${file}`;
-}};
+/********************************************************************
+// Demo 2: Continuously grab image from webcam stream and detect it.
+********************************************************************/
 
-// Our input frames will come from here.
-const videoElement =
-    document.getElementsByClassName('input_video')[0] as HTMLVideoElement;
-const canvasElement =
-    document.getElementsByClassName('output_canvas')[0] as HTMLCanvasElement;
-const controlsElement =
-    document.getElementsByClassName('control-panel')[0] as HTMLDivElement;
-const canvasCtx = canvasElement.getContext('2d')!;
+const video = document.getElementById("webcam");
+const canvasElement = document.getElementById("output_canvas");
+const canvasCtx = canvasElement.getContext("2d");
+const gestureOutput = document.getElementById("gesture_output");
 
-// We'll add this to our control panel later, but we'll save it here so we can
-// call tick() each time the graph runs.
-const fpsControl = new controls.FPS();
+// Check if webcam access is supported.
+function hasGetUserMedia() {
+  return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+}
 
-// Optimization: Turn off animated spinner after its hiding animation is done.
-const spinner = document.querySelector('.loading')! as HTMLDivElement;
-spinner.ontransitionend = () => {
-  spinner.style.display = 'none';
-};
+// If webcam supported, add event listener to button for when user
+// wants to activate it.
+if (hasGetUserMedia()) {
+  enableWebcamButton = document.getElementById("webcamButton");
+  enableWebcamButton.addEventListener("click", enableCam);
+} else {
+  console.warn("getUserMedia() is not supported by your browser");
+}
 
-const landmarkContainer =
-    document.getElementsByClassName('landmark-grid-container')[0] as HTMLDivElement;
-const grid = new LandmarkGrid(landmarkContainer, {
-  connectionColor: 0xCCCCCC,
-  definedColors:
-      [{name: 'LEFT', value: 0xffa500}, {name: 'RIGHT', value: 0x00ffff}],
-  range: 2,
-  fitToGrid: true,
-  labelSuffix: 'm',
-  landmarkSize: 2,
-  numCellsPerAxis: 4,
-  showHidden: false,
-  centered: true,
-});
+// Enable the live webcam view and start detection.
+function enableCam(event) {
+  if (!gestureRecognizer) {
+    alert("Please wait for gestureRecognizer to load");
+    return;
+  }
 
-let activeEffect = 'mask';
-function onResults(results: mpPose.Results): void {
-  // Hide the spinner.
-  document.body.classList.add('loaded');
+  if (webcamRunning === true) {
+    webcamRunning = false;
+    enableWebcamButton.innerText = "ENABLE PREDICTIONS";
+  } else {
+    webcamRunning = true;
+    enableWebcamButton.innerText = "DISABLE PREDICITONS";
+  }
 
-  // Update the frame rate.
-  fpsControl.tick();
+  // getUsermedia parameters.
+  const constraints = {
+    video: true
+  };
 
-  // Draw the overlays.
+  // Activate the webcam stream.
+  navigator.mediaDevices.getUserMedia(constraints).then(function (stream) {
+    video.srcObject = stream;
+    video.addEventListener("loadeddata", predictWebcam);
+  });
+}
+
+async function predictWebcam() {
+  const webcamElement = document.getElementById("webcam");
+  // Now let's start detecting the stream.
+  if (runningMode === "IMAGE") {
+    runningMode = "VIDEO";
+    await gestureRecognizer.setOptions({ runningMode: runningMode });
+  }
+  let nowInMs = Date.now();
+  const results = gestureRecognizer.recognizeForVideo(video, nowInMs);
+
   canvasCtx.save();
   canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
 
-  if (results.segmentationMask) {
-    canvasCtx.drawImage(
-        results.segmentationMask, 0, 0, canvasElement.width,
-        canvasElement.height);
-
-    // Only overwrite existing pixels.
-    if (activeEffect === 'mask' || activeEffect === 'both') {
-      canvasCtx.globalCompositeOperation = 'source-in';
-      // This can be a color or a texture or whatever...
-      canvasCtx.fillStyle = '#00FF007F';
-      canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
-    } else {
-      canvasCtx.globalCompositeOperation = 'source-out';
-      canvasCtx.fillStyle = '#0000FF7F';
-      canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
+  canvasElement.style.height = videoHeight;
+  webcamElement.style.height = videoHeight;
+  canvasElement.style.width = videoWidth;
+  webcamElement.style.width = videoWidth;
+  if (results.landmarks) {
+    for (const landmarks of results.landmarks) {
+      drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {
+        color: "#00FF00",
+        lineWidth: 5
+      });
+      drawLandmarks(canvasCtx, landmarks, { color: "#FF0000", lineWidth: 2 });
     }
-
-    // Only overwrite missing pixels.
-    canvasCtx.globalCompositeOperation = 'destination-atop';
-    canvasCtx.drawImage(
-        results.image, 0, 0, canvasElement.width, canvasElement.height);
-
-    canvasCtx.globalCompositeOperation = 'source-over';
-  } else {
-     canvasCtx.drawImage(
-         results.image, 0, 0, canvasElement.width, canvasElement.height);
-  }
-
-  if (results.poseLandmarks) {
-    drawingUtils.drawConnectors(
-        canvasCtx, results.poseLandmarks, mpPose.POSE_CONNECTIONS,
-        {visibilityMin: 0.65, color: 'white'});
-    drawingUtils.drawLandmarks(
-        canvasCtx,
-        Object.values(mpPose.POSE_LANDMARKS_LEFT)
-            .map(index => results.poseLandmarks[index]),
-        {visibilityMin: 0.65, color: 'white', fillColor: 'rgb(255,138,0)'});
-    drawingUtils.drawLandmarks(
-        canvasCtx,
-        Object.values(mpPose.POSE_LANDMARKS_RIGHT)
-            .map(index => results.poseLandmarks[index]),
-        {visibilityMin: 0.65, color: 'white', fillColor: 'rgb(0,217,231)'});
-    drawingUtils.drawLandmarks(
-        canvasCtx,
-        Object.values(mpPose.POSE_LANDMARKS_NEUTRAL)
-            .map(index => results.poseLandmarks[index]),
-        {visibilityMin: 0.65, color: 'white', fillColor: 'white'});
   }
   canvasCtx.restore();
-
-  if (results.poseWorldLandmarks) {
-    grid.updateLandmarks(results.poseWorldLandmarks, mpPose.POSE_CONNECTIONS, [
-      {list: Object.values(mpPose.POSE_LANDMARKS_LEFT), color: 'LEFT'},
-      {list: Object.values(mpPose.POSE_LANDMARKS_RIGHT), color: 'RIGHT'},
-    ]);
+  if (results.gestures.length > 0) {
+    gestureOutput.style.display = "block";
+    gestureOutput.style.width = videoWidth;
+    gestureOutput.innerText =
+      "GestureRecognizer: " +
+      results.gestures[0][0].categoryName +
+      "\n Confidence: " +
+      Math.round(parseFloat(results.gestures[0][0].score) * 100) +
+      "%";
   } else {
-    grid.updateLandmarks([]);
+    gestureOutput.style.display = "none";
+  }
+  // Call this function again to keep predicting when the browser is ready.
+  if (webcamRunning === true) {
+    window.requestAnimationFrame(predictWebcam);
   }
 }
-
-const pose = new mpPose.Pose(options);
-pose.onResults(onResults);
-
-// Present a control panel through which the user can manipulate the solution
-// options.
-new controls
-    .ControlPanel(controlsElement, {
-      selfieMode: true,
-      modelComplexity: 1,
-      smoothLandmarks: true,
-      enableSegmentation: false,
-      smoothSegmentation: true,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5,
-      effect: 'background',
-    })
-    .add([
-      new controls.StaticText({title: 'MediaPipe Pose'}),
-      fpsControl,
-      new controls.Toggle({title: 'Selfie Mode', field: 'selfieMode'}),
-      new controls.SourcePicker({
-        onSourceChanged: () => {
-          // Resets because this model gives better results when reset between
-          // source changes.
-          pose.reset();
-        },
-        onFrame:
-            async (input: controls.InputImage, size: controls.Rectangle) => {
-              const aspect = size.height / size.width;
-              let width: number, height: number;
-              if (window.innerWidth > window.innerHeight) {
-                height = window.innerHeight;
-                width = height / aspect;
-              } else {
-                width = window.innerWidth;
-                height = width * aspect;
-              }
-              canvasElement.width = width;
-              canvasElement.height = height;
-              await pose.send({image: input});
-            },
-      }),
-      new controls.Slider({
-        title: 'Model Complexity',
-        field: 'modelComplexity',
-        discrete: ['Lite', 'Full', 'Heavy'],
-      }),
-      new controls.Toggle(
-          {title: 'Smooth Landmarks', field: 'smoothLandmarks'}),
-      new controls.Toggle(
-          {title: 'Enable Segmentation', field: 'enableSegmentation'}),
-      new controls.Toggle(
-          {title: 'Smooth Segmentation', field: 'smoothSegmentation'}),
-      new controls.Slider({
-        title: 'Min Detection Confidence',
-        field: 'minDetectionConfidence',
-        range: [0, 1],
-        step: 0.01
-      }),
-      new controls.Slider({
-        title: 'Min Tracking Confidence',
-        field: 'minTrackingConfidence',
-        range: [0, 1],
-        step: 0.01
-      }),
-      new controls.Slider({
-        title: 'Effect',
-        field: 'effect',
-        discrete: {'background': 'Background', 'mask': 'Foreground'},
-      }),
-    ])
-    .on(x => {
-      const options = x as mpPose.Options;
-      videoElement.classList.toggle('selfie', options.selfieMode);
-      activeEffect = (x as {[key: string]: string})['effect'];
-      pose.setOptions(options);
-    });
